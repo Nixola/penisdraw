@@ -1,10 +1,15 @@
+local repler = require 'repler'
+repler.load()
+
 local notification_queue = {}
+
+complexLine = {}
 
 local game_info = ""
 
 -- this is for the client
 local line = {}
-local text = nil
+text = nil
 local users = {}
 
 -- this is for the server
@@ -94,6 +99,7 @@ local server, client_host
 local server_host
 
 local draw_button = love._version_minor >= 10 and 1 or "l"
+local comm_button = love._version_minor >= 10 and 2 or "r"
 
 -- utf8 support
 local utf8 = require("unicode")
@@ -184,7 +190,7 @@ local function deserialize_line(str)
   return line
 end
 
-local function serialize_text(t)
+function serialize_text(t)
   local color, x, y, t = unpack(t)
   color = math.min(#colors, math.max(0, color))
   t = utf8.sub(t, 1, 80)
@@ -197,9 +203,15 @@ local function deserialize_text(str)
   return {tonumber(color), tonumber(x), tonumber(y), t}
 end
 
-local function send_data(type, data)
+function send_data(type, data)
   server:send(type .. "\t" .. data)
 end
+
+local l = {}; for x = 1, 800 do table.insert(l, x); table.insert(l, 0); table.insert(l, x); table.insert(l, 600); end
+function clearEverything()
+  send_data("line", serialize_line(l))
+end
+
 
 local function broadcast_data(type, data)
   server_host:broadcast(type .. "\t" .. data)
@@ -259,6 +271,21 @@ local function place_text(t, x, y)
   -- bring back mouse
   love.mouse.setVisible(true)
 end
+
+function place_text_3d(T, X, Y)
+  local c = current_color
+  local t = T or text
+  current_color = 0
+  local x, y = love.mouse.getPosition()
+  x = X or x
+  y = Y or y
+  x = x - 1
+  y = y - 1
+  place_text(t, x, y)
+  current_color = c
+  place_text(t, x + 1, y + 1)
+end
+
 
 -- dispatch table for the received commands
 local commands = {
@@ -595,9 +622,20 @@ if not headless then
       table.insert(line, y)
     elseif btn == draw_button and text then
       -- place text
-      place_text(text, x, y)
+      place_text_3d(text, x, y)
     elseif btn == "wu" or btn == "wd" then
       love.wheelmoved(0, btn == "wu" and 1 or -1)
+    elseif btn == comm_button then
+      print(x, y)
+      print()
+      for i = 1, #complexLine/2 do
+        i = i * 2
+        complexLine[i-1] = complexLine[i-1] + x
+        complexLine[i] = complexLine[i] + y
+        print(complexLine[i-1], complexLine[i])
+      end
+      send_data("line", serialize_line(complexLine))
+      complexLine = {}
     end
   end
 
@@ -625,12 +663,19 @@ if not headless then
         text = utf8.sub(text, 1, utf8.len(text) - 1)
       end
       if key == "return" and not is_repeat then
-        place_text(text, love.mouse.getPosition())
+        if not love.keyboard.isDown("lctrl") then
+          place_text(text, love.mouse.getPosition())
+        else
+          text = text .. "\n"
+        end
       end
       if key == "escape" then
         text = nil
         
         love.mouse.setVisible(true)
+      end
+      if key == "v" and love.keyboard.isDown("lctrl", "rctrl") then
+        text = text .. love.system.getClipboardText()
       end
     else
       if hosting then
@@ -691,4 +736,42 @@ function love.quit()
 
   server:disconnect()
   client_host:flush()
+end
+
+
+function poly(n, radius, star)
+  local t = complexLine
+  local n2 = math.floor(n/2)
+  for i = 1, n do
+    if star then
+      local k = i
+      i = ((i - 1) * n2) % n + 1
+      print(k, i)
+    end
+    local angle = (i / n) * math.pi * 2
+    table.insert(t, math.floor(math.sin(angle) * radius))
+    table.insert(t, math.floor(-math.cos(angle) * radius))
+  end
+  table.insert(t, t[1])
+  table.insert(t, t[2])
+end
+
+function circle(n, radius)
+  local t = complexLine
+  local x1, y1
+  for i = n, n+radius do
+    local angle = (i / radius) * math.pi * 2
+    local x, y = math.floor(math.sin(angle) * radius), math.floor(-math.cos(angle) * radius)
+    table.insert(t, x)
+    table.insert(t, y)
+    x1 = x1 or x
+    y1 = y1 or y
+  end
+  table.insert(t, x1)
+  table.insert(t, y1)
+end
+
+function circlePoly(n, radius, star)
+  poly(n, radius, star)
+  circle(n, radius + 2)
 end

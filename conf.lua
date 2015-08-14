@@ -12,7 +12,7 @@ function love.conf(t)
     t.window = false
   end
 
-  local disable = {"audio", "joystick", "math", "physics", "sound", "system", "thread"}
+  local disable = {"audio", "joystick", "math", "physics", "sound"}
 
   if has_arg("--headless") then
     t.window = false
