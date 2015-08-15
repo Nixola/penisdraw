@@ -1193,7 +1193,7 @@ if not headless then
         elseif key == "backspace" then
           text = text:gsub("%s*%S*%s*$", "")
           send_data(serialize_set_text(nil, current_size, text))
-        elseif key == "enter" then
+        elseif key == "return" then
           text = text .. "\n"
         end
       else
@@ -1287,7 +1287,6 @@ if not headless then
 
     if text then
       local t = t:gsub("[\r\n]", "")
-      text = utf8.sub(text .. t, 1, 80)
       text = utf8.sub(text .. t, 1, rules["maximum text length"] or 80)
 
       if rules["send mouse position"] == "yes" then
