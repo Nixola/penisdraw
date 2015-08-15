@@ -12,6 +12,7 @@ local line = {}
 text = nil
 local users = {}
 local mouses = setmetatable({}, {__mode = "k"})
+local my_mouse = nil
 
 -- this is for the server
 local buffer = {}
@@ -31,9 +32,8 @@ local canvas, big_font, font, small_font, fonts
 local colorpicker
 
 if not headless then
-  local w, h = 800, 600
   colorpicker = require("colorpicker")
-  colorpicker:create(w / 2 - 200, h / 2 - 200, 200)
+  colorpicker:create(0, 0, 200)
   -- graphics stuff
   canvas = love.graphics.newCanvas()
   canvas:renderTo(function()
@@ -65,7 +65,12 @@ end
 -- rules
 local rules = {}
 local server_rules = {
-  ["send mouse position"] = "yes"
+  ["send mouse position"] = "yes",
+  ["minimum brush width"] = 2,
+  ["maximum brush width"] = 32,
+  ["minimum text size"] = 8,
+  ["maximum text size"] = 32,
+  ["maximum text length"] = 120
 }
 
 -- networking stuff
@@ -113,7 +118,7 @@ add_struct(
     uint8_t r, g, b;
     uint8_t size;
     uint16_t x, y;
-    unsigned char text[160];
+    unsigned char text[256];
   ]], {
     "r", "g", "b",
     "x", "y",
@@ -177,6 +182,13 @@ add_struct(
   }
 )
 add_struct(
+  "mouse_set", [[
+    uint8_t id;
+  ]], {
+    "id"
+  }
+)
+add_struct(
   "set_text", [[
     uint8_t id;
     uint8_t size;
@@ -220,6 +232,8 @@ function love.load()
       io.stderr:write("Could not set up the server\n")
       hosting = false
     end
+
+    rules = server_rules
   end
 
   -- connect
@@ -256,7 +270,7 @@ function love.load()
   thanks to:
   - excessive (karai + holo supergroup) for his awesome cdata lib,
   - alexar for his colorpicker lib,
-  - nix, zorg, deltaf1, holo, videahgams, karai for being a cool guys,
+  - nix, zorg, deltaf1, holo, videahgams, karai, maxwell for being a cool guys,
   - penis painters who crashed or lagged my server over and over.]]
 end
 
@@ -378,9 +392,11 @@ end
 local function deserialize_line(packet)
   local decoded = cdata:decode("draw_line", packet)
 
+  local width = math.min(rules["maximum brush width"] or 16, math.max(rules["minimum brush width"] or 2, decoded.width))
+
   return {
     color = {decoded.r, decoded.g, decoded.b},
-    width = math.min(16, math.max(1, decoded.width)),
+    width = width,
     decoded.x1, decoded.y1, decoded.x2, decoded.y2
   }
 end
@@ -402,11 +418,14 @@ end
 local function deserialize_text(packet)
   local decoded = cdata:decode("draw_text", packet)
 
+  local size = math.min(rules["maximum text size"] or 32, math.max(rules["minimum text size"] or 9, decoded.size))
+  local text = utf8.sub(ffi.string(decoded.text), 0, rules["maximum text length"] or 80)
+
   return {
     color = {decoded.r, decoded.g, decoded.b},
-    size = decoded.size,
+    size = size,
     x = decoded.x, y = decoded.y,
-    text = ffi.string(decoded.text)
+    text = text
   }
 end
 
@@ -464,7 +483,9 @@ end
 local function deserialize_mouse_add(packet)
   local decoded = cdata:decode("mouse_add", packet)
 
-  return decoded.id, decoded.width or 2, {decoded.r, decoded.g, decoded.b}
+  local width = math.min(rules["maximum brush width"] or 16, math.max(rules["minimum brush width"] or 2, decoded.width))
+
+  return decoded.id, width, {decoded.r, decoded.g, decoded.b}
 end
 
 local function serialize_mouse_remove(id)
@@ -478,6 +499,21 @@ end
 
 local function deserialize_mouse_remove(packet)
   local decoded = cdata:decode("mouse_remove", packet)
+
+  return decoded.id
+end
+
+local function serialize_mouse_set(id)
+  local struct = cdata:set_struct("mouse_set", {
+    type = packets.mouse_set,
+    id = id or 0
+  })
+
+  return cdata:encode(struct)
+end
+
+local function deserialize_mouse_set(packet)
+  local decoded = cdata:decode("mouse_set", packet)
 
   return decoded.id
 end
@@ -497,7 +533,10 @@ end
 local function deserialize_set_text(packet)
   local decoded = cdata:decode("set_text", packet)
 
-  return decoded.id, decoded.size, ffi.string(decoded.text), decoded.input
+  local size = math.min(rules["maximum text size"] or 32, math.max(rules["minimum text size"] or 9, decoded.size))
+  local text = utf8.sub(ffi.string(decoded.text), 0, rules["maximum text length"] or 80)
+
+  return decoded.id, size, text, decoded.input
 end
 
 local function send_data(data)
@@ -567,7 +606,7 @@ local commands = {
 
     local line = deserialize_line(data)
 
-    if line and #line > 0 and #line < 10001 then
+    if line and #line > 0 then
       canvas:renderTo(function()
         love.graphics.setColor(line.color)
         love.graphics.setLineWidth(line.width or 0)
@@ -666,6 +705,11 @@ local commands = {
     local id = deserialize_mouse_remove(data)
 
     mouses[id] = nil
+  end,
+  mouse_set = function(data)
+    local id = deserialize_mouse_set(data)
+
+    my_mouse = id
   end,
   set_text = function(data)
     local id, size, text, input = deserialize_set_text(data)
@@ -770,6 +814,8 @@ local server_commands = {
       id = counter
       -- assign the id to client's mouse
       peer_mouses[peer] = id
+
+      peer:send(serialize_mouse_set(id))
     end
 
     local _, width, color = deserialize_mouse_add(data)
@@ -822,6 +868,9 @@ function love.draw()
 
   -- painted shit
   love.graphics.setColor(255, 255, 255)
+
+  -- slime the magician recommended doing this
+  -- so the lines are always smooth
   if love._version_minor >= 10 then
     love.graphics.setBlendMode("alpha", false)
   else
@@ -831,10 +880,10 @@ function love.draw()
   love.graphics.draw(canvas)
   love.graphics.setBlendMode("alpha")
 
+  -- unpainted shit
   love.graphics.setColor(current_color)
   local mx, my = love.mouse.getPosition()
 
-  -- unpainted shit
   if not text then
     if #line > 3 then
       love.graphics.line(line)
@@ -850,46 +899,45 @@ function love.draw()
       love.graphics.pop()
     end
 
-    if rules["send mouse position"] ~= "yes" then
-      love.graphics.setLineWidth(1)
-      love.graphics.circle("line", mx, my, current_width / 2)
-    end
+    love.graphics.setLineWidth(1)
+    love.graphics.circle("line", mx, my, current_width / 2)
   else
-    if rules["send mouse position"] ~= "yes" then
-      local font = fonts[current_size]
-      love.graphics.setFont(font)
-      love.graphics.print(text, mx, my)
+    local font = fonts[current_size]
+    love.graphics.setFont(font)
+    love.graphics.print(text, mx, my)
 
-      love.graphics.setColor(255, 255, 255)
-      love.graphics.setFont(small_font)
+    love.graphics.setColor(255, 255, 255)
+    love.graphics.setFont(small_font)
 
-      local length = utf8.len(text)
-      love.graphics.print(string.format("%d char%s left", 80 - length, 80 - length == 1 and "" or "s"), mx, my - small_font:getHeight())
+    local length = utf8.len(text)
+    love.graphics.print(string.format("%d char%s left", (rules["maximum text length"] or 80) - length, (rules["maximum text length"] or 80) - length == 1 and "" or "s"), mx, my - small_font:getHeight())
 
-      love.graphics.rectangle("fill", mx + font:getWidth(text), my, 1, font:getHeight())
-    end
+    love.graphics.rectangle("fill", mx + font:getWidth(text), my, 1, font:getHeight())
   end
 
   -- draw cursors
   if rules["send mouse position"] == "yes" then
     for id, mouse in pairs(mouses) do
-      love.graphics.setColor(mouse.color)
-      love.graphics.setLineWidth(1)
-      if not mouse.text then
-        love.graphics.circle("line", mouse.x, mouse.y, mouse.width / 2)
-      else
-        local text, mx, my = mouse.text, mouse.x, mouse.y
-        local font = fonts[mouse.text_size]
-        love.graphics.setFont(font)
-        love.graphics.print(text, mx, my)
+      -- ignore own cursor
+      if id ~= my_mouse then
+        love.graphics.setColor(mouse.color)
+        love.graphics.setLineWidth(1)
+        if not mouse.text then
+          love.graphics.circle("line", mouse.x, mouse.y, mouse.width / 2)
+        else
+          local text, mx, my = mouse.text, mouse.x, mouse.y
+          local font = fonts[mouse.text_size]
+          love.graphics.setFont(font)
+          love.graphics.print(text, mx, my)
 
-        love.graphics.setColor(255, 255, 255)
-        love.graphics.setFont(small_font)
+          love.graphics.setColor(255, 255, 255)
+          love.graphics.setFont(small_font)
 
-        local length = utf8.len(text)
-        love.graphics.print(string.format("%d char%s left", 80 - length, 80 - length == 1 and "" or "s"), mx, my - small_font:getHeight())
+          local length = utf8.len(text)
+          love.graphics.print(string.format("%d char%s left", (rules["maximum text length"] or 80) - length, (rules["maximum text length"] or 80) - length == 1 and "" or "s"), mx, my - small_font:getHeight())
 
-        love.graphics.rectangle("fill", mx + font:getWidth(text), my, 1, font:getHeight())
+          love.graphics.rectangle("fill", mx + font:getWidth(text), my, 1, font:getHeight())
+        end
       end
     end
   end
@@ -1014,12 +1062,14 @@ function love.update(dt)
         -- i need it
         love.filesystem.write("online", #peers)
 
+        -- first send him the rules
+        for rule, value in pairs(server_rules) do
+          event.peer:send(serialize_rpc("rule", rule, value))
+        end
+
         -- send him the lines and texts
         for _, line in ipairs(buffer) do
           event.peer:send(line)
-        end
-        for rule, value in pairs(server_rules) do
-          event.peer:send(serialize_rpc("rule", rule, value))
         end
 
         -- send the new userlist to everyone
@@ -1132,22 +1182,34 @@ if not headless then
     end
 
     if text then
-      if key == "backspace" then
-        text = utf8.sub(text, 1, utf8.len(text) - 1)
-        send_data(serialize_set_text(nil, current_size, text))
-      end
-      if key == "return" and not is_repeat then
-        if not love.keyboard.isDown("lctrl") then
-          place_text(text, love.mouse.getPosition())
-        else
+      local ctrl_key = love.system.getOS() == "OS X" and "gui" or "ctrl"
+      if love.keyboard.isDown("l" .. ctrl_key, "r" .. ctrl_key) then
+        if key == "v" then
+          text = utf8.sub(text .. love.system.getClipboardText(), 0, rules["maximum text length"] or 80)
+          send_data(serialize_set_text(nil, current_size, text))
+        elseif key == "c" then
+          love.system.setClipboardText(text)
+          push_notification("copied to clipboard.", 1, {0, 80, 0})
+        elseif key == "backspace" then
+          text = text:gsub("%s*%S*%s*$", "")
+          send_data(serialize_set_text(nil, current_size, text))
+        elseif key == "enter" then
           text = text .. "\n"
         end
-      end
-      if key == "escape" then
-        text = nil
-        send_data(serialize_set_text(nil, current_size, text))
-        
-        love.mouse.setVisible(true)
+      else
+        if key == "backspace" then
+          text = utf8.sub(text, 1, utf8.len(text) - 1)
+          send_data(serialize_set_text(nil, current_size, text))
+        end
+        if key == "return" and not is_repeat then
+          place_text(text, love.mouse.getPosition())
+        end
+        if key == "escape" then
+          text = nil
+          send_data(serialize_set_text(nil, current_size, text))
+          
+          love.mouse.setVisible(true)
+        end
       end
       if key == "v" and love.keyboard.isDown("lctrl", "rctrl") then
         text = text .. love.system.getClipboardText()
@@ -1226,6 +1288,7 @@ if not headless then
     if text then
       local t = t:gsub("[\r\n]", "")
       text = utf8.sub(text .. t, 1, 80)
+      text = utf8.sub(text .. t, 1, rules["maximum text length"] or 80)
 
       if rules["send mouse position"] == "yes" then
         send_data(serialize_set_text(nil, current_size, text))
@@ -1238,15 +1301,19 @@ if not headless then
 end
 
 function love.wheelmoved(x, y)
+  local ctrl_key = love.system.getOS() == "OS X" and "gui" or "ctrl"
+  if love.keyboard.isDown("l" .. ctrl_key, "r" .. ctrl_key) then
+    x, y = x * 1 / 3, y * 1 / 3
+  end
+
   if not text then
     local original_width = current_width
-    current_width = math.min(16, math.max(2, current_width + y))
-
+    current_width = math.min(rules["maximum brush width"] or 16, math.max(rules["minimum brush width"] or 2, current_width + y * 3))
     if rules["send mouse position"] == "yes" and original_width ~= current_width then
       send_data(serialize_mouse_add(nil, current_width, current_color))
     end
   else
-    current_size = math.min(64, math.max(9, current_size + y))
+    current_size = math.min(rules["maximum text size"] or 32, math.max(rules["minimum text size"] or 9, current_size + y * 3))
     send_data(serialize_set_text(nil, current_size, text))
   end
 end
