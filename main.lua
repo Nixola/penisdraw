@@ -18,16 +18,18 @@ local my_mouse = nil
 local buffer = {}
 local peers = {}
 local peer_mouses = setmetatable({}, {__mode = "k"})
+local votes = {}
 
 local current_color = {255, 255, 255}
 current_width = 2
 local current_size = 11
 
+local function has_value(t, value) for _, v in pairs(t) do if value == v then return true end end return false end
 local function has_arg(name) for _, v in pairs(arg) do if v == name then return true end end return false end
 
 local headless = has_arg("--headless")
 local hosting = has_arg("--hosting")
-local canvas, big_font, font, small_font, fonts
+local canvas, big_font, font, small_font, fonts, cursor
 
 local colorpicker
 
@@ -42,9 +44,9 @@ if not headless then
     love.graphics.rectangle("fill", 0, 0, canvas:getWidth(), canvas:getHeight())
   end)
 
-  big_font = love.graphics.newFont(22)
-  font = love.graphics.newFont(11)
-  small_font = love.graphics.newFont(10)
+  big_font = love.graphics.newFont("noto.ttf", 22)
+  font = love.graphics.newFont("noto.ttf", 12)
+  small_font = love.graphics.newFont("noto.ttf", 11)
   font:setLineHeight(1.3)
 
   fonts = {}
@@ -53,13 +55,45 @@ if not headless then
     __index = function(t, k)
       local font = rawget(t, k)
       if not font then
-        font = love.graphics.newFont(k)
+        font = love.graphics.newFont("noto.ttf", k)
         rawset(t, k, font)
       end
 
       return font
     end
   })
+
+  local cursor_pixels = {
+    {0, 0, 0, 255},
+    {255, 255, 255, 255},
+    {0, 0, 0, 255},
+    {255, 255, 255, 255},
+    {0, 0, 0, 0},
+    {0, 0, 0, 0},
+    {0, 0, 0, 0},
+    {0, 0, 0, 0},
+    {255, 255, 255, 255},
+    {0, 0, 0, 255}
+  }
+
+  local cursor_image = love.image.newImageData(#cursor_pixels * 2, #cursor_pixels * 2)
+  for i = 1, #cursor_pixels do
+    -- left to right
+    cursor_image:setPixel(i - 1, #cursor_pixels, unpack(cursor_pixels[i]))
+
+    -- right to left
+    cursor_image:setPixel(#cursor_pixels * 2 - i - 1, #cursor_pixels, unpack(cursor_pixels[i]))
+
+    -- top to bottom
+    cursor_image:setPixel(#cursor_pixels - 1, i, unpack(cursor_pixels[i]))
+
+    -- bottom to top
+    cursor_image:setPixel(#cursor_pixels - 1, #cursor_pixels * 2 - i, unpack(cursor_pixels[i]))
+  end
+
+  cursor = love.mouse.newCursor(cursor_image, #cursor_pixels, #cursor_pixels)
+
+  love.mouse.setCursor(cursor)
 end
 
 -- rules
@@ -67,7 +101,7 @@ local rules = {}
 local server_rules = {
   ["send mouse position"] = "yes",
   ["minimum brush width"] = 2,
-  ["maximum brush width"] = 32,
+  ["maximum brush width"] = 64,
   ["minimum text size"] = 8,
   ["maximum text size"] = 32,
   ["maximum text length"] = 120
@@ -253,9 +287,10 @@ function love.load()
   - hold left mouse button to draw,
   - press middle mouse button to pick a color from the canvas,
   - scroll to change width/text size,
+  - ctrl + scroll to change size more precisely,
   - press enter to type and enter/lmb to place the text,
   - press S to screenshot,
-  - press red X to close.]]
+  - press F4 to vote for canvas clear.]]
   if hosting then
     game_info = game_info .. [[
 
@@ -270,7 +305,8 @@ function love.load()
   thanks to:
   - excessive (karai + holo supergroup) for his awesome cdata lib,
   - alexar for his colorpicker lib,
-  - nix, zorg, deltaf1, holo, videahgams, karai, maxwell for being a cool guys,
+  - nix, zorg, deltaf1, holo, videahgams, karai, maxwell, sapper for being cool guys,
+  - other cool guys for being cool guys,
   - penis painters who crashed or lagged my server over and over.]]
 end
 
@@ -561,7 +597,9 @@ end
 
 local function clear()
   broadcast_rpc("clear")
+
   buffer = {}
+  votes = {}
 end
 
 local function place_text(t, x, y)
@@ -763,6 +801,27 @@ local server_commands = {
     local command = args[1]
     table.remove(args, 1)
 
+    if command == "voteclear" then
+      if has_value(votes, peer) then
+        -- remove from votes table
+        for i, vote in pairs(votes) do
+          if vote == peer then
+            table.remove(votes, i)
+            break
+          end
+        end
+
+        broadcast_notification(friendly_name(peer) .. " cancelled his vote for clear.", 4, {180, 0, 0})
+      else
+        table.insert(votes, peer)
+        broadcast_notification(friendly_name(peer) .. " voted for clear (" .. #votes .. "/" .. math.floor(#peers * .7) .. ").", 4, {180, 0, 0})
+      end
+
+      if #votes >= math.floor(#peers * .7) then
+        broadcast_notification("canvas cleared.", 4, {255, 0, 0})
+      end
+    end
+
     if not is_admin(peer) then return end
 
     if command == "clear" then
@@ -863,6 +922,21 @@ local function receive_data(data, peer, serverside)
   return true
 end
 
+local function indicator_shit(str)
+  local amount, last_line = 0, str
+  for i = 1, utf8.len(str) do
+    if utf8.sub(str, i, i) == "\n" then
+      amount = amount + 1
+    end
+  end
+
+  if amount > 0 then
+    last_line = str:match("\n([^\n]*)$")
+  end
+
+  return amount, last_line
+end
+
 function love.draw()
   local w, h = love.graphics.getDimensions()
 
@@ -912,7 +986,8 @@ function love.draw()
     local length = utf8.len(text)
     love.graphics.print(string.format("%d char%s left", (rules["maximum text length"] or 80) - length, (rules["maximum text length"] or 80) - length == 1 and "" or "s"), mx, my - small_font:getHeight())
 
-    love.graphics.rectangle("fill", mx + font:getWidth(text), my, 1, font:getHeight())
+    local newlines, line = indicator_shit(text, "\n")
+    love.graphics.rectangle("fill", mx + font:getWidth(line), my + newlines * font:getHeight(), 1, font:getHeight())
   end
 
   -- draw cursors
@@ -936,7 +1011,8 @@ function love.draw()
           local length = utf8.len(text)
           love.graphics.print(string.format("%d char%s left", (rules["maximum text length"] or 80) - length, (rules["maximum text length"] or 80) - length == 1 and "" or "s"), mx, my - small_font:getHeight())
 
-          love.graphics.rectangle("fill", mx + font:getWidth(text), my, 1, font:getHeight())
+          local newlines, line = indicator_shit(text, "\n")
+          love.graphics.rectangle("fill", mx + font:getWidth(line), my + newlines * font:getHeight(), 1, font:getHeight())
         end
       end
     end
@@ -1087,8 +1163,21 @@ function love.update(dt)
         for i = #peers, 1, -1 do
           if peers[i] == event.peer then
             table.remove(peers, i)
+            break
           end
         end
+
+        -- and from the votes table
+        for i, vote in pairs(votes) do
+          if vote == event.peer then
+            table.remove(votes, i)
+            break
+          end
+        end
+
+        -- and from the mouse table
+        peer_mouses[event.peer] = nil
+
         log("%d users online.", #peers)
 
         -- i need it
@@ -1190,19 +1279,27 @@ if not headless then
         elseif key == "c" then
           love.system.setClipboardText(text)
           push_notification("copied to clipboard.", 1, {0, 80, 0})
-        elseif key == "backspace" then
+        elseif key == "backspace" or key == "w" then
           text = text:gsub("%s*%S*%s*$", "")
           send_data(serialize_set_text(nil, current_size, text))
-        elseif key == "return" then
-          text = text .. "\n"
+        elseif key == "u" then
+          text = ""
+          send_data(serialize_set_text(nil, current_size, text))
         end
       else
         if key == "backspace" then
           text = utf8.sub(text, 1, utf8.len(text) - 1)
           send_data(serialize_set_text(nil, current_size, text))
         end
-        if key == "return" and not is_repeat then
-          place_text(text, love.mouse.getPosition())
+        if key == "return" then
+          if love.keyboard.isDown("lshift", "rshift") then
+            text = utf8.sub(text .. "\n", 1, rules["maximum text length"] or 80)
+            send_data(serialize_set_text(nil, current_size, text))
+          else
+            if not is_repeat then
+              place_text(text, love.mouse.getPosition())
+            end
+          end
         end
         if key == "escape" then
           text = nil
@@ -1250,30 +1347,28 @@ if not headless then
         clearPoly()
       end
     else
-      if key == "s" and not is_repeat then
-        local filename = string.format("%s-drawing.png", os.date("%Y-%m-%d_%H-%M-%S"))
-        if love._version_minor >= 10 then
-          canvas:newImageData():encode("png", filename)
-        else
-          canvas:getImageData():encode(filename)
-        end
-        push_notification("screenshot saved.", 3, {255, 255, 0})
-      end
-      if key == "return" and not is_repeat then
-        text = ""
-        send_data(serialize_set_text(nil, current_size, text))
-
-        love.mouse.setVisible(false)
-      end
-      
-      -- admin commands
       if not is_repeat then
+        if key == "s" then
+          local filename = string.format("%s-drawing.png", os.date("%Y-%m-%d_%H-%M-%S"))
+          if love._version_minor >= 10 then
+            canvas:newImageData():encode("png", filename)
+          else
+            canvas:getImageData():encode(filename)
+          end
+          push_notification("screenshot saved.", 3, {255, 255, 0})
+        elseif key == "return" then
+          text = ""
+          send_data(serialize_set_text(nil, current_size, text))
+          love.mouse.setVisible(false)
+        elseif key == "f4" then
+          send_rpc("voteclear")
+        end
+
+      -- admin commands
         if key == "f1" then
           send_rpc("clear")
         elseif key == "f2" then
           send_rpc("save")
-        elseif key == "f3" then
-          send_rpc("rule", "send mouse position", rules["send mouse position"] == "yes" and "no" or "yes")
         end
       end
     end
