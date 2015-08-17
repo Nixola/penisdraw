@@ -1094,13 +1094,14 @@ function love.draw()
     colorpicker:draw()
   end
   if command then
+    local w, h = love.graphics.getWidth(), love.graphics.getHeight()
     love.graphics.setColor(0,0,0, 160)
-    love.graphics.rectangle("fill", 0, 600-16, 800, 600)
+    love.graphics.rectangle("fill", 0, h-16, w, h)
     love.graphics.setColor(255,255,255,255)
     love.graphics.setFont(fonts[12])
-    love.graphics.print(command, 0, 600-16)
+    love.graphics.print(command, 0, h-16)
     local x = fonts[12]:getWidth(command)+1.5
-    love.graphics.rectangle("fill", x, 600-14, 1, 12)
+    love.graphics.rectangle("fill", x, h-14, 1, 12)
   end
 end
 
