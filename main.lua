@@ -1415,6 +1415,9 @@ if not headless then
         command = utf8.sub(command, 1, utf8.len(command) - 1)
       end
       if key == "return" and not is_repeat then
+        table.insert(nixCommandsList, 1, command)
+        nixHistory = 0
+
         --run command
         local c = command:match("^%:([^%s]+)")
         command = command:sub(#c+2, -1)
@@ -1435,8 +1438,19 @@ if not headless then
         
         love.mouse.setVisible(true)
       end
-      if key == "v" and love.keyboard.isDown("lctrl", "rctrl") then
+      if key == "v" and love.keyboard.isDown("lctrl", "rctrl", "lgui", "rgui") then
         command = command .. love.system.getClipboardText()
+      end
+      if key == "up" and nixHistory < #nixCommandsList then
+        nixHistory = nixHistory + 1
+        if nixHistory == 1 then
+          nixCommandsList[0] = command
+        end
+        command = nixCommandsList[nixHistory]
+      end
+      if key == "down" and nixHistory > 0 then
+        nixHistory = nixHistory - 1
+        command = nixCommandsList[nixHistory]
       end
     elseif #complexLine > 3 then
       if (key == " " or key == "space") then
@@ -1593,3 +1607,5 @@ end
 nixCommands = {
   poly = poly, send = sendPoly, circle = circlePoly, clear = clearPoly,
 }
+nixCommandsList = {[0] = ""}
+nixHistory = 0
