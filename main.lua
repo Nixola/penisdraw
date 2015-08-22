@@ -1379,7 +1379,7 @@ if not headless then
           love.system.setClipboardText(text)
           push_notification("copied to clipboard.", 1, {0, 80, 0})
         elseif key == "backspace" or key == "w" then
-          text = text:gsub("%s*%S*%s*$", "")
+          text = text:gsub("%S*%s*$", "")
           send_data(serialize_set_text(nil, current_size, text))
         elseif key == "u" then
           text = ""
@@ -1605,7 +1605,7 @@ clearPoly = function()
 end
 
 nixCommands = {
-  poly = poly, send = sendPoly, circle = circlePoly, clear = clearPoly,
+  poly = poly, send = sendPoly, circle = circlePoly, clear = clearPoly, rpc = send_rpc,
 }
 nixCommandsList = {[0] = ""}
 nixHistory = 0
