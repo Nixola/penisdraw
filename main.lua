@@ -1019,13 +1019,13 @@ end
 function love.draw()
   local w, h = love.graphics.getDimensions()
 
-  -- Paainted shit
+  -- painted shit
   love.graphics.setColor(255, 255, 255)
 
   -- slime the magician recommended doing this
   -- so the lines are always smooth
   if love._version_minor >= 10 then
-    love.graphics.setBlendMode("alpha", false)
+    love.graphics.setBlendMode("alpha", "premultiplied")
   else
     love.graphics.setBlendMode("premultiplied")
   end
@@ -1033,7 +1033,7 @@ function love.draw()
   love.graphics.draw(canvas)
   love.graphics.setBlendMode("alpha")
 
-  -- unPaainted shit
+  -- unpainted shit
   love.graphics.setColor(current_color)
   local mx, my = love.mouse.getPosition()
 
@@ -1190,8 +1190,8 @@ function love.update(dt)
       if event.type == "receive" then
         receive_data(event.data, event.peer, true)
       elseif event.type == "connect" then
-        log("%s (%s) joined the Paaint.", tostring(event.peer), friendly_name(event.peer))
-        broadcast_notification(string.format("%s joined the Paaint.", friendly_name(event.peer)))
+        log("%s (%s) joined the paint.", tostring(event.peer), friendly_name(event.peer))
+        broadcast_notification(string.format("%s joined the paint.", friendly_name(event.peer)))
 
         -- into the peer table
         table.insert(peers, event.peer)
@@ -1213,8 +1213,8 @@ function love.update(dt)
         -- send the new userlist to everyone
         broadcast_data(serialize_user_list(peers))
       elseif event.type == "disconnect" then
-        log("%s (%s) left the Paaint.", tostring(event.peer), friendly_name(event.peer))
-        broadcast_notification(string.format("%s lefted the Paaint.", friendly_name(event.peer)))
+        log("%s (%s) left the paint.", tostring(event.peer), friendly_name(event.peer))
+        broadcast_notification(string.format("%s lefted the paint.", friendly_name(event.peer)))
 
         -- remove the mouse
         if server_rules["send mouse position"] == "yes" then
